@@ -1,0 +1,85 @@
+Add your design document in here.  A marker should be able to answer the
+following questions from your design document.
+
+1.What significant data structures have you added and what function do
+they perform?  2.What are any significant issues surround managing the
+data structures and state do they contain?  3.What data structures are
+per-process and what structures are shared between processes?  4.What is
+the main issues related to transferring data to and from applications?
+5.If fork() was implemented, what concurrency issues would be introduced
+to your implementation?  6.What primitive operations exist to support the
+transfer of data to and from kernel space?
+
+___________________________________________________________________________________________________
+
+Our design involves using arrays data structures passing data to and from the
+Open File (OF) table and the File Descriptor (FD) table. The OF table is a
+global table in which each index has a pointer to a struct of_item containing
+the vnode(struct vnode *vptr), file pointer(offt_t fp), mode(int flag) and
+file descriptor count(int fd_count). The fd_count is used as an incrementer
+to store the amount of a file descriptor which is present in all processes
+pointing to the OF table. The OF table is shared amongst all processes,
+where any multiple processes can access the values stored per index in the
+OF table. The FD table is designed for each index to store the value of
+the open file index it is pointing to in the OF table. In kern/main/main.c,
+the system is booted up and is where the OF table is intialised at function
+of_init() thus it is common in our design that all processes running are able
+to access the OF table, using atomic operations such as the syscall functions
+used in ../syscall.c. For file kern/syscall/run_program.c, intialistaion of
+each process occurs here and therefore the FD table is booted up in this file
+for each process thus making each FD table unique per process. All further
+implementation of syscall functions are written in kern/syscall/file.c and
+implementation of helper functions are written in kern/syscall/FDtable.c
+with the appropriate header files.
+
+In the ../syscall.c file, for each syscall function we faced issues in
+our design on methods of managing incorrect user inputs, error return
+values and how to successfully pass such that the kernel did not face any
+panic. In kern/syscall/file.c each function does not store each error the
+same way. The VFS operations provides a safety in handling incorrect inputs
+such as vfs_open() used in the sys_open() function, however, not all syscall
+functions use VFS layers to cover incorrect inputs and rather the method
+of returning these errno values are different. In sys_open() for example
+the error value is returned by the function, and the actual return value
+(FD number) is stored into v0, by passing in its trapframe address, that way
+the appropriate errno value and retval can be saved in syscall.c. However,
+for functions such as sys_write() where we want to return the number of
+bytes, the err value is defaulted to 0 and its address is passed into the
+sys_write() function which maybe altered if an error is found. Thus, its
+return value still produces the usual behaviour of returning the number of
+bytes written. For sys_close() it is different as there is no trapframe v0
+register passed in and rather due to close() functionality in the syscall
+specification pages where it only returns 0 on success otherwise its errno
+value the result variable is just returned into err.
+
+Therefore, whilst VFS layering serves beneficially in functions to help cover
+incorrect user inputs such as sys_open(), other functions do not contain VFS
+operations in our design and each is different in managing error values. We
+handle this by having two variable retval and err which are essentially the
+same variables used to store and return incorrect inputs per function.
+
+Whilst using array data structures in our design allows for ease at
+transferring to and from from applications, the idea of concurrency issues
+are raised to concern if fork() were to be implemented. As the FD table is
+a per-process operation, where many syscalls can be called to this table,
+the OF table can be called by multiple processes running which could cause
+concurrency issues such where syscalls from multiple proccesses can overlap and
+cause incorrect results. If fork() were to be implemented to avoid this issue,
+accessing the OF table must be done mutually exclusively to avoid any break
+in the system. This could be approached using locks through lock_acquire()
+and lock_release() where each time a system call is made a lock is acquired
+and when it is completed (or returns an error) it will release. Thus, this
+will resolve the concurrency issues as only 1 system call will have access
+to the OF and FD tables at a single time.
+
+In ../file.c, the <copyinout.h> file is used to implement primitive operations
+such as copyin() to support the transfer of data to the userland from the
+kernel space. An example of this is seen in sys_leek() where the copyin()
+function when passed arguments (userptr_t)poi, &whence and sizeof(int) allow
+for variable whence to be changed from type userptr_t to type int which
+can be checked whether to SEEK_SET, SEEK_CUR or SEEK_END in the file. This
+is due to whence being stored on the stack rather than in one of the V$
+registers. Another example, is checking the buffer passed into write, which
+is initially a userland pointer, but after checking where the memory is
+allocated, turns into a kernel safe buffer. Primitive operations like these
+make it safer to interact with the kernel and make code much more succinct.
